@@ -278,7 +278,8 @@ def make_master_flat(
     if master_darks is not None:
         inputs = sort_calib_files(master_darks)
         for key in file_inputs.keys():
-            master_dark_inputs[key] = inputs[key][0] if key in inputs else None
+            if key in inputs:
+                master_dark_inputs[key] = inputs[key][0]
     if output_directory is not None:
         outdir = Path(output_directory)
         outdir.mkdir(parents=True, exist_ok=True)
@@ -300,7 +301,7 @@ def make_master_flat(
             for path in filelist:
                 kwds = dict(
                     output_directory=path.parent.parent / "collapsed",
-                    dark_filename=master_dark_inputs[key],
+                    dark_filename=master_dark_inputs[key][0],
                     force=force,
                     method=collapse,
                 )
