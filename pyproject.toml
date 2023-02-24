@@ -3,8 +3,8 @@ requires = ["setuptools>=58", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vampires_dpp"
-description = "VAMPIRES Data Processing Pipeline"
+name = "fastpdi_dpp"
+description = "FastPDI Data Processing Pipeline"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [{name = "Miles Lucas", email = "mdlucas@hawaii.edu"}]
@@ -49,11 +49,10 @@ docs = [
 ]
 
 [project.scripts]
-dpp = "vampires_dpp.cli.dpp:main"
-find_dark_settings = "vampires_dpp.cli.find_dark_settings:main"
+fpp = "fastpdi_dpp.cli.fpp:main"
 
 [tool.setuptools.dynamic]
-version = {attr = "vampires_dpp.__version__"}
+version = {attr = "fastpdi_dpp.__version__"}
 
 [tool.pytest.ini_options]
 log_cli = false
@@ -62,7 +61,7 @@ log_cli_format = "[%(levelname)s] (%(name)-15s) %(message)s"
 addopts = "--randomly-seed=4796"
 
 [tool.coverage.run]
-source = ["vampires_dpp"]
+source = ["fastpdi_dpp"]
 
 [tool.black]
 line-length = 100

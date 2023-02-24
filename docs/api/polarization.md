@@ -1,13 +1,13 @@
 # Polarization
 
 ```{eval-rst}
-.. automodule:: vampires_dpp.polarization
+.. automodule:: fastpdi_dpp.polarization
     :members:
 ```
 
 ## Mueller calculus
 
 ```{eval-rst}
-.. automodule:: vampires_dpp.mueller_matrices
+.. automodule:: fastpdi_dpp.mueller_matrices
     :members:
 ```

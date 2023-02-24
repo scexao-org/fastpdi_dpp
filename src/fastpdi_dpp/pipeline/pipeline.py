@@ -11,35 +11,35 @@ from astropy.io import fits
 from serde.toml import to_toml
 from tqdm.auto import tqdm
 
-import vampires_dpp as vpp
-from vampires_dpp.calibration import calibrate_file
-from vampires_dpp.constants import PIXEL_SCALE, PUPIL_OFFSET
-from vampires_dpp.frame_selection import frame_select_file, measure_metric_file
-from vampires_dpp.image_processing import (
+import fastpdi_dpp as vpp
+from fastpdi_dpp.calibration import calibrate_file
+from fastpdi_dpp.constants import PIXEL_SCALE, PUPIL_OFFSET
+from fastpdi_dpp.frame_selection import frame_select_file, measure_metric_file
+from fastpdi_dpp.image_processing import (
     FileSet,
     collapse_cube_file,
     combine_frames_files,
+    collapse_frames_files,
 )
-from vampires_dpp.image_registration import measure_offsets_file, register_file
-from vampires_dpp.organization import header_table
-from vampires_dpp.pipeline.config import PipelineOptions
-from vampires_dpp.polarization import (
+from fastpdi_dpp.image_registration import measure_offsets_file, register_file
+from fastpdi_dpp.organization import header_table
+from fastpdi_dpp.pipeline.config import PipelineOptions
+from fastpdi_dpp.polarization import (
     HWP_POS_STOKES,
     collapse_stokes_cube,
     make_diff_image,
     measure_instpol,
     measure_instpol_satellite_spots,
     pol_inds,
-    polarization_calibration_triplediff,
-    triplediff_average_angles,
+    polarization_calibration_doublediff,
+    doublediff_average_angles,
     write_stokes_products,
 )
-from vampires_dpp.util import any_file_newer, check_version
-from vampires_dpp.wcs import get_gaia_astrometry
+from fastpdi_dpp.util import any_file_newer, check_version, average_angle
+from fastpdi_dpp.wcs import get_gaia_astrometry
 
 
 class Pipeline(PipelineOptions):
-
     __doc__ = PipelineOptions.__doc__
 
     def __post_init__(self):
@@ -47,7 +47,7 @@ class Pipeline(PipelineOptions):
         # make sure versions match within SemVar
         if not check_version(self.version, vpp.__version__):
             raise ValueError(
-                f"Input pipeline version ({self.version}) is not compatible with installed version of `vampires_dpp` ({vpp.__version__})."
+                f"Input pipeline version ({self.version}) is not compatible with installed version of `fastpdi_dpp` ({vpp.__version__})."
             )
         self.master_darks = {1: None, 2: None}
         self.master_flats = {1: None, 2: None}
@@ -67,7 +67,7 @@ class Pipeline(PipelineOptions):
         Raises
         ------
         ValueError
-            If the configuration `version` is not compatible with the current `vampires_dpp` version.
+            If the configuration `version` is not compatible with the current `fastpdi_dpp` version.
 
         Examples
         --------
@@ -90,7 +90,7 @@ class Pipeline(PipelineOptions):
         Raises
         ------
         ValueError
-            If the configuration `version` is not compatible with the current `vampires_dpp` version.
+            If the configuration `version` is not compatible with the current `fastpdi_dpp` version.
         """
         config = tomli.loads(toml_str)
         return cls(**config)
@@ -124,7 +124,7 @@ class Pipeline(PipelineOptions):
         fh_logger.setLevel(logging.DEBUG)
         self.logger.addHandler(fh_logger)
 
-        self.logger.info(f"VAMPIRES DPP: v{vpp.__version__}")
+        self.logger.info(f"FastPDI DPP: v{vpp.__version__}")
         ## configure astrometry
         self.get_frame_centers()
         self.get_coordinate()
@@ -167,9 +167,9 @@ class Pipeline(PipelineOptions):
         if self.calibrate is not None:
             cur_file, tripwire = self.calibrate_one(fileinfo["path"], fileinfo)
             if not isinstance(cur_file, Path):
-                file_flc1, file_flc2 = cur_file
-                path1, tripwire = self.process_post_calib(file_flc1, fileinfo, tripwire)
-                path2, tripwire = self.process_post_calib(file_flc2, fileinfo, tripwire)
+                file_left, file_right = cur_file
+                path1, tripwire = self.process_post_calib(file_left, fileinfo, tripwire)
+                path2, tripwire = self.process_post_calib(file_right, fileinfo, tripwire)
                 return (path1, path2), tripwire
             else:
                 path, tripwire = self.process_post_calib(cur_file, fileinfo, tripwire)
@@ -189,22 +189,20 @@ class Pipeline(PipelineOptions):
         return path, tripwire
 
     def get_frame_centers(self):
-        self.centers = {"cam1": None, "cam2": None}
+        self.centers = {"left": None, "right": None}
         if self.frame_centers is not None:
-            if self.frame_centers.cam1 is not None:
-                self.centers["cam1"] = np.array(self.frame_centers.cam1)[::-1]
-            if self.frame_centers.cam2 is not None:
-                self.centers["cam2"] = np.array(self.frame_centers.cam2)[::-1]
-        self.logger.debug(f"Cam 1 frame center is {self.centers['cam1']} (y, x)")
-        self.logger.debug(f"Cam 2 frame center is {self.centers['cam2']} (y, x)")
+            if self.frame_centers["left"] is not None:
+                self.centers["left"] = np.array(self.frame_centers["left"])[::-1]
+            if self.frame_centers["right"] is not None:
+                self.centers["right"] = np.array(self.frame_centers["right"])[::-1]
+        self.logger.debug(f"Left frame center is {self.centers['left']} (y, x)")
+        self.logger.debug(f"Right frame center is {self.centers['right']} (y, x)")
 
-    def get_center(self, fileinfo):
-        if fileinfo["U_CAMERA"] == 2:
-            return self.centers["cam2"]
-        # for cam 1 data, need to flip coordinate about x-axis
+    def get_center(self, fileinfo, beam="left"):
+        # need to flip coordinate about x-axis
         Ny = fileinfo["NAXIS2"]
-        ctr = np.asarray((Ny - 1 - self.centers["cam1"][0], self.centers["cam1"][1]))
-        return ctr
+
+        return np.asarray((Ny - 1 - self.centers[beam][0], self.centers[beam][1]))
 
     def get_coordinate(self):
         self.pxscale = PIXEL_SCALE
@@ -256,24 +254,12 @@ class Pipeline(PipelineOptions):
             outdir = self.output_directory
         outdir.mkdir(parents=True, exist_ok=True)
         self.logger.debug(f"Saving calibrated data to {outdir.absolute()}")
-        if config.distortion is not None:
-            transform_filename = config.distortion.transform_filename
-        else:
-            transform_filename = None
         tripwire |= config.force
         ext = 1 if ".fits.fz" in path.name else 0
-        if fileinfo["U_CAMERA"] == 1:
-            dark_filename = config.master_darks.cam1
-            flat_filename = config.master_flats.cam1
-        elif fileinfo["U_CAMERA"] == 2:
-            dark_filename = config.master_darks.cam2
-            flat_filename = config.master_flats.cam2
         calib_file = calibrate_file(
             path,
-            dark_filename=dark_filename,
-            flat_filename=flat_filename,
-            transform_filename=transform_filename,
-            deinterleave=config.deinterleave,
+            dark_filename=config.master_dark,
+            flat_filename=config.master_flat,
             bpfix=config.fix_bad_pixels,
             coord=self.coord,
             output_directory=outdir,
@@ -293,7 +279,8 @@ class Pipeline(PipelineOptions):
         tripwire |= config.force
         outdir.mkdir(parents=True, exist_ok=True)
         self.logger.debug(f"Saving selected data to {outdir.absolute()}")
-        ctr = self.get_center(fileinfo)
+        beam = fits.getval(path, "BEAM")
+        ctr = self.get_center(fileinfo, beam=beam)
         if self.coronagraph is not None:
             metric_file = measure_metric_file(
                 path,
@@ -333,7 +320,8 @@ class Pipeline(PipelineOptions):
         outdir.mkdir(parents=True, exist_ok=True)
         self.logger.debug(f"Saving registered data to {outdir.absolute()}")
         tripwire |= config.force
-        ctr = self.get_center(fileinfo)
+        beam = fits.getval(path, "BEAM")
+        ctr = self.get_center(fileinfo, beam=beam)
         if self.coronagraph is not None:
             offsets_file = measure_offsets_file(
                 path,
@@ -391,22 +379,22 @@ class Pipeline(PipelineOptions):
         outname1 = outname2 = None
 
         # save cubes for each camera
-        cam1_table = self.output_table.query("U_CAMERA == 1").sort_values(["MJD", "U_FLCSTT"])
-        if len(cam1_table) > 0:
-            outname1 = self.products.output_directory / f"{self.name}_adi_cube_cam1.fits"
-            combine_frames_files(cam1_table["path"], output=outname1, force=force)
-            derot_angles1 = np.asarray(cam1_table["D_IMRPAD"] + PUPIL_OFFSET)
+        left_table = self.output_table.query("BEAM == 'left'").sort_values(["MJD"])
+        if len(left_table) > 0:
+            outname1 = self.products.output_directory / f"{self.name}_adi_cube_left.fits"
+            combine_frames_files(left_table["path"], output=outname1, force=force)
+            derot_angles1 = np.asarray(left_table["D_IMRPAD"] + PUPIL_OFFSET)
             fits.writeto(
                 outname1.with_stem(f"{outname1.stem}_angles"),
                 derot_angles1.astype("f4"),
                 overwrite=True,
             )
 
-        cam2_table = self.output_table.query("U_CAMERA == 2").sort_values(["MJD", "U_FLCSTT"])
-        if len(cam2_table) > 0:
-            outname2 = self.products.output_directory / f"{self.name}_adi_cube_cam2.fits"
-            combine_frames_files(cam2_table["path"], output=outname2, force=force)
-            derot_angles2 = np.asarray(cam2_table["D_IMRPAD"] + PUPIL_OFFSET)
+        right_table = self.output_table.query("BEAM == 'right'").sort_values(["MJD"])
+        if len(right_table) > 0:
+            outname2 = self.products.output_directory / f"{self.name}_adi_cube_right.fits"
+            combine_frames_files(right_table["path"], output=outname2, force=force)
+            derot_angles2 = np.asarray(right_table["D_IMRPAD"] + PUPIL_OFFSET)
             fits.writeto(
                 outname2.with_stem(f"{outname2.stem}_angles"),
                 derot_angles2.astype("f4"),
@@ -433,11 +421,10 @@ class Pipeline(PipelineOptions):
             self.polarimetry_ip_correct(outdir, force=tripwire)
         else:
             self.diff_files_ip = self.diff_files.copy()
+
         # 3. Do higher-order correction
         if self.products is not None:
-            self.polarimetry_triplediff(
-                force=tripwire, N_per_hwp=config.N_per_hwp, order=config.order
-            )
+            self.polarimetry_doublediff(outdir, force=tripwire, N_per_hwp=config.N_per_hwp)
 
         self.logger.info("Finished PDI")
 
@@ -446,30 +433,23 @@ class Pipeline(PipelineOptions):
         # table should still be sorted by MJD
         groups = self.output_table.groupby("MJD")
         # filter groups without full camera/FLC states
-        filesets = []
-        cam1_paths = []
-        cam2_paths = []
+        left_paths = []
+        right_paths = []
         for mjd, group in groups:
-            fileset = FileSet(group["path"])
-            if len(group) == 4:
-                filesets.append(fileset)
-                for flc in (1, 2):
-                    cam1_paths.append(fileset.paths[(1, flc)])
-                    cam2_paths.append(fileset.paths[(2, flc)])
-                continue
-            miss = set([(1, 1), (1, 2), (2, 1), (2, 2)]) - set(fileset.keys)
-            self.logger.warn(f"Discarding group for missing {miss} camera, FLC state pairs")
+            subgroup = group.groupby("BEAM")
+            left_paths.append(subgroup.get_group("left")["path"].iloc[0])
+            right_paths.append(subgroup.get_group("right")["path"].iloc[0])
 
         with mp.Pool(self.num_proc) as pool:
             jobs = []
-            for cam1_file, cam2_file in zip(cam1_paths, cam2_paths):
-                stem = re.sub("_cam[12]", "", cam1_file.name)
+            for left_file, right_file in zip(left_paths, right_paths):
+                stem = re.sub("_(left)|(right)", "", left_file.name)
                 outname = outdir / stem.replace(".fits", "_diff.fits")
-                self.logger.debug(f"loading cam1 image from {cam1_file.absolute()}")
-                self.logger.debug(f"loading cam2 image from {cam2_file.absolute()}")
+                self.logger.debug(f"loading left image from {left_file.absolute()}")
+                self.logger.debug(f"loading right image from {right_file.absolute()}")
                 kwds = dict(outname=outname, force=force)
                 jobs.append(
-                    pool.apply_async(make_diff_image, args=(cam1_file, cam2_file), kwds=kwds)
+                    pool.apply_async(make_diff_image, args=(left_file, right_file), kwds=kwds)
                 )
 
             self.diff_files = [job.get() for job in tqdm(jobs, desc="Making diff images")]
@@ -515,7 +495,7 @@ class Pipeline(PipelineOptions):
         stack_corr = stack.copy()
         stack_corr[1] -= pX * stack[0]
 
-        stokes = HWP_POS_STOKES[header["U_HWPANG"]]
+        stokes = HWP_POS_STOKES[header["P_RTAGL1"]]
         header[f"DPP_P{stokes}"] = pX, f"I -> {stokes} IP correction"
         fits.writeto(
             outname,
@@ -540,7 +520,7 @@ class Pipeline(PipelineOptions):
         stack_corr = stack.copy()
         stack_corr[1] -= pX * stack[0]
 
-        stokes = HWP_POS_STOKES[header["U_HWPANG"]]
+        stokes = HWP_POS_STOKES[header["P_RTAGL1"]]
         header[f"DPP_P{stokes}"] = pX, f"I -> {stokes} IP correction"
         fits.writeto(
             outname,
@@ -601,15 +581,40 @@ class Pipeline(PipelineOptions):
     # header[f"VPP_P{stokes}"] = pX, f"I -> {stokes} IP correction"
     # fits.writeto(outname, stack, header=header, overwrite=True)
 
-    def polarimetry_triplediff(self, force=False, N_per_hwp=1, **kwargs):
+    def polarimetry_doublediff(self, outdir, force=False, N_per_hwp=1, **kwargs):
         # sort table
         table = header_table(self.diff_files_ip, quiet=True)
-        inds = pol_inds(table["U_HWPANG"], 2 * N_per_hwp, **kwargs)
+        # coadd subsequent hwp angles
+        hwp_angles = []
+        paths = []
+        cur_hwp_ang = None
+        idx = 0
+        for row in table.itertuples():
+            if cur_hwp_ang is None:
+                cur_hwp_ang = row.P_RTAGL1
+                hwp_angles.append(cur_hwp_ang)
+                paths.append([row.path])
+            elif row.P_RTAGL1 == cur_hwp_ang:
+                paths[idx].append(row.path)
+            else:
+                cur_hwp_ang = row.P_RTAGL1
+                hwp_angles.append(cur_hwp_ang)
+                paths.append([row.path])
+                idx += 1
+
+        new_paths = []
+        for i in range(len(paths)):
+            outname = outdir / f"{self.name}_stokes_{i:03d}.fits"
+            ave_ang = average_angle([fits.getval(path, "D_IMRPAD") for path in paths[i]])
+            new_paths.append(collapse_frames_files(paths[i], output=outname, method="median"))
+            fits.setval(new_paths[i], "D_IMRPAD", value=ave_ang)
+
+        inds = pol_inds(hwp_angles, N_per_hwp, **kwargs)
         if len(inds) == 0:
             raise ValueError(f"Could not correctly order the HWP angles")
-        table_filt = table.loc[inds]
+        paths_filt = [new_paths[idx] for idx in inds]
         self.logger.info(
-            f"using {len(table_filt)}/{len(table)} files for triple-differential processing"
+            f"using {len(paths_filt)}/{len(new_paths)} files for double-differential processing"
         )
 
         outname = self.products.output_directory / f"{self.name}_stokes_cube.fits"
@@ -618,13 +623,13 @@ class Pipeline(PipelineOptions):
             force
             or not outname.is_file()
             or not outname_coll.is_file()
-            or any_file_newer(table_filt["path"], outname)
+            or any_file_newer(paths_filt, outname)
         ):
-            polarization_calibration_triplediff(
-                table_filt["path"], outname=outname, force=True, N_per_hwp=N_per_hwp
+            polarization_calibration_doublediff(
+                paths_filt, outname=outname, force=True, N_per_hwp=N_per_hwp
             )
             self.logger.debug(f"saved Stokes cube to {outname.absolute()}")
-            stokes_angles = triplediff_average_angles(table_filt["path"])
+            stokes_angles = doublediff_average_angles(paths_filt)
             stokes_cube, header = fits.getdata(
                 outname,
                 header=True,

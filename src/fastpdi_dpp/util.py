@@ -50,7 +50,7 @@ def check_version(config: str, vpp: str) -> bool:
     config : str
         Version string for the configuration
     vpp : str
-        Version string for `vampires_dpp`
+        Version string for `fastpdi_dpp`
 
     Returns
     -------

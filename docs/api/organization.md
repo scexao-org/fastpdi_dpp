@@ -1,8 +1,8 @@
 # Organization
 
 ```{eval-rst}
-.. automodule:: vampires_dpp.organization
+.. automodule:: fastpdi_dpp.organization
     :members:
-.. automodule:: vampires_dpp.headers
+.. automodule:: fastpdi_dpp.headers
     :members:
 ```

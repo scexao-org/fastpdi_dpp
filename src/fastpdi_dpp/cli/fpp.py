@@ -4,17 +4,15 @@ from pathlib import Path
 
 from serde.toml import to_toml
 
-import vampires_dpp as vpp
-from vampires_dpp.calibration import make_master_dark, make_master_flat
-from vampires_dpp.constants import DEFAULT_NPROC
-from vampires_dpp.organization import header_table, sort_files
-from vampires_dpp.pipeline.config import CoronagraphOptions, SatspotOptions
-from vampires_dpp.pipeline.pipeline import Pipeline
-from vampires_dpp.pipeline.templates import (
-    VAMPIRES_MAXIMAL,
-    VAMPIRES_PDI,
-    VAMPIRES_SDI,
-    VAMPIRES_SINGLECAM,
+import fastpdi_dpp as vpp
+from fastpdi_dpp.calibration import make_master_dark, make_master_flat
+from fastpdi_dpp.constants import DEFAULT_NPROC
+from fastpdi_dpp.organization import header_table, sort_files
+from fastpdi_dpp.pipeline.config import CoronagraphOptions, SatspotOptions
+from fastpdi_dpp.pipeline.pipeline import Pipeline
+from fastpdi_dpp.pipeline.templates import (
+    FASTPDI_MAXIMAL,
+    FASTPDI_PDI,
 )
 
 # set up logging
@@ -49,7 +47,7 @@ def sort(args):
 sort_parser = subparser.add_parser(
     "sort",
     aliases="s",
-    help="sort raw VAMPIRES data",
+    help="sort raw FastPDI data",
     description="Sorts raw data based on the data type. This will either use the `DATA-TYP` header value or the `U_OGFNAM` header, depending on when your data was taken.",
 )
 sort_parser.add_argument("filenames", nargs="+", help="FITS files to sort")
@@ -141,14 +139,10 @@ calib_parser.set_defaults(func=calib)
 def new_config(args):
     path = Path(args.config)
     match args.template:
-        case "singlecam":
-            t = VAMPIRES_SINGLECAM
         case "pdi":
-            t = VAMPIRES_PDI
-        case "halpha":
-            t = VAMPIRES_SDI
+            t = FASTPDI_PDI
         case "all":
-            t = VAMPIRES_MAXIMAL
+            t = FASTPDI_MAXIMAL
         case _:
             raise ValueError(f"template not recognized {args.template}")
     t.target = args.object

@@ -123,12 +123,7 @@ def sort_file(filename: PathLike, outdir: PathLike, copy: bool = False, **kwargs
     path = Path(filename)
     header = fits.getheader(path, **kwargs)
 
-    # data pre 2023/02/02 does not store DATA-TYP
-    # meaningfully, so use ad-hoc sorting method
-    if header["DATA-TYP"] == "ACQUISITION":
-        foldname = foldername_old(outdir, path, header)
-    else:
-        foldname = foldername_new(outdir, header)
+    foldname = foldername(outdir, header)
 
     newname = foldname / path.name
     foldname.mkdir(parents=True, exist_ok=True)
@@ -139,13 +134,13 @@ def sort_file(filename: PathLike, outdir: PathLike, copy: bool = False, **kwargs
     return newname
 
 
-def foldername_new(outdir: PathLike, header: fits.Header, subdir: PathLike = "raw"):
+def foldername(outdir: PathLike, header: fits.Header, subdir: PathLike = "raw"):
     match header["DATA-TYP"]:
         case "OBJECT":
             # subsort based on filter, EM gain, and exposure time
-            filt = header["U_FILTER"]
-            gain = header["U_EMGAIN"]
-            exptime = header["U_AQTINT"] / 1e3  # ms
+            filt = header["X_IRCFLT"]
+            gain = header["DETGAIN"]
+            exptime = header["EXPTIME"] * 1e3  # ms
             subdir = f"{filt}_em{gain:.0f}_{exptime:05.0f}ms"
             foldname = outdir / header["OBJECT"].replace(" ", "_") / subdir
         case "DARK":
@@ -160,26 +155,5 @@ def foldername_new(outdir: PathLike, header: fits.Header, subdir: PathLike = "ra
             foldname = outdir / "pinholes" / subdir
         case _:
             foldname = outdir
-
-    return foldname
-
-
-def foldername_old(outdir: PathLike, path: Path, header: fits.Header, subdir: PathLike = "raw"):
-    name = header.get("U_OGFNAM", path.name)
-    if "dark" in name:
-        foldname = outdir / "darks" / subdir
-    elif "skies" in name or "sky" in name:
-        foldname = outdir / "skies" / subdir
-    elif "flat" in name:
-        foldname = outdir / "flats" / subdir
-    elif "pinhole" in name:
-        foldname = outdir / "pinholes" / subdir
-    else:
-        # subsort based on filter, EM gain, and exposure time
-        filt = header["U_FILTER"]
-        gain = header["U_EMGAIN"]
-        exptime = header["U_AQTINT"] / 1e3  # ms
-        subdir = f"{filt}_em{gain:.0f}_{exptime:05.0f}ms"
-        foldname = outdir / header["OBJECT"].replace(" ", "_") / subdir
 
     return foldname

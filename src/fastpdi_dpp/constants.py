@@ -5,23 +5,19 @@ import numpy as np
 from astropy.coordinates import EarthLocation
 
 # important parameters
-PIXEL_SCALE = 6.24  # mas / px
-PUPIL_OFFSET = 140.4  # deg
+PIXEL_SCALE = 15.3  # mas / px
+PUPIL_OFFSET = 2.7  # deg
 SATSPOT_ANGLE = (45 - PUPIL_OFFSET) % 90  # deg
 # Subaru location - DO NOT CHANGE!
 SUBARU_LOC = EarthLocation(lat=19.825504 * u.deg, lon=-155.4760187 * u.deg)
 
 FILTER_ANGULAR_SIZE = {
-    "Open": np.rad2deg(700e-9 / 7.79) * 3.6e6,
-    "625-50": np.rad2deg(625e-9 / 7.79) * 3.6e6,
-    "675-50": np.rad2deg(675e-9 / 7.79) * 3.6e6,
-    "725-50": np.rad2deg(725e-9 / 7.79) * 3.6e6,
-    "750-50": np.rad2deg(750e-9 / 7.79) * 3.6e6,
-    "775-50": np.rad2deg(775e-9 / 7.79) * 3.6e6,
+    "open": np.rad2deg(1.03e-6 / 7.79) * 3.6e6,
+    "y": np.rad2deg(1.03e-6 / 7.79) * 3.6e6,
+    "j": np.rad2deg(1.24e-6 / 7.79) * 3.6e6,
+    "h": np.rad2deg(1.63e-6 / 7.79) * 3.6e6,
 }
 
 # limit default nproc since many operations are
 # throttled by file I/O
 DEFAULT_NPROC = min(cpu_count(), 8)
-
-READNOISE = 82  # e-

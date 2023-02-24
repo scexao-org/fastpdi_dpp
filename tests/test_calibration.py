@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from vampires_dpp.calibration import calibrate_file, make_dark_file, make_flat_file
+from fastpdi_dpp.calibration import calibrate_file, make_dark_file, make_flat_file
 
 
 class TestCalibrationFrames:

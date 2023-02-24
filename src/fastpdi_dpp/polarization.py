@@ -9,13 +9,13 @@ from numpy.typing import ArrayLike, NDArray
 from photutils import aperture_photometry
 from scipy.optimize import minimize_scalar
 
-from vampires_dpp.constants import PUPIL_OFFSET
-from vampires_dpp.image_processing import combine_frames_headers, derotate_cube
-from vampires_dpp.image_registration import offset_centroid
-from vampires_dpp.indexing import cutout_slice, frame_angles, frame_radii, window_slices
-from vampires_dpp.mueller_matrices import mueller_matrix_model
-from vampires_dpp.util import any_file_newer, average_angle
-from vampires_dpp.wcs import apply_wcs
+from fastpdi_dpp.constants import PUPIL_OFFSET
+from fastpdi_dpp.image_processing import combine_frames_headers, derotate_cube
+from fastpdi_dpp.image_registration import offset_centroid
+from fastpdi_dpp.indexing import cutout_slice, frame_angles, frame_radii, window_slices
+from fastpdi_dpp.mueller_matrices import mueller_matrix_model
+from fastpdi_dpp.util import any_file_newer, average_angle
+from fastpdi_dpp.wcs import apply_wcs
 
 HWP_POS_STOKES = {0: "Q", 45: "-Q", 22.5: "U", 67.5: "-U"}
 
@@ -197,7 +197,7 @@ def collapse_stokes_cube(stokes_cube, pa, header=None):
     stokes_out = np.empty_like(stokes_cube, shape=(stokes_cube.shape[0], *stokes_cube.shape[-2:]))
     for s in range(stokes_cube.shape[0]):
         derot = derotate_cube(stokes_cube[s], pa)
-        stokes_out[s] = np.median(derot, axis=0, overwrite_input=True)
+        stokes_out[s] = np.nanmedian(derot, axis=0, overwrite_input=True)
     # fix PUPIL_OFFSET effect
     stokes_corr = rotate_stokes(stokes_out, np.deg2rad(PUPIL_OFFSET))
     # now that cube is derotated we can apply WCS
@@ -216,7 +216,7 @@ def polarization_calibration_triplediff(
     .. admonition:: Pupil-tracking mode
         :class: tip
 
-        For each of these 16 image sets, it is important to consider the apparant sky rotation when in pupil-tracking mode (which is the default for most VAMPIRES observations). With this naive triple-differential subtraction, if there is significant sky motion, the output Stokes frame will be smeared.
+        For each of these 16 image sets, it is important to consider the apparant sky rotation when in pupil-tracking mode (which is the default for most FastPDI observations). With this naive triple-differential subtraction, if there is significant sky motion, the output Stokes frame will be smeared.
 
         The parallactic angles for each set of 16 frames should be averaged (``average_angle``) and stored to construct the final derotation angle vector
 
@@ -313,11 +313,103 @@ def triplediff_average_angles(filenames):
     return pas
 
 
-def pol_inds(hwp_angs: ArrayLike, n=4, order="QQUU"):
+def polarization_calibration_doublediff(
+    filenames: Sequence[str], outname, force=False, N_per_hwp=1
+) -> NDArray:
+    """
+    Return a Stokes cube using the *bona fide* double differential method. This method will split the input data into sets of 16 frames- 2 for each camera, 2 for each FLC state, and 4 for each HWP angle.
+
+    .. admonition:: Pupil-tracking mode
+        :class: tip
+
+        For each of these 16 image sets, it is important to consider the apparant sky rotation when in pupil-tracking mode (which is the default for most FastPDI observations). With this naive double-differential subtraction, if there is significant sky motion, the output Stokes frame will be smeared.
+
+        The parallactic angles for each set of 16 frames should be averaged (``average_angle``) and stored to construct the final derotation angle vector
+
+    Parameters
+    ----------
+    filenames : Sequence[str]
+        list of input filenames to construct Stokes frames from
+
+    Raises
+    ------
+    ValueError:
+        If the input filenames are not a clean multiple of 16. To ensure you have proper 16 frame sets, use ``pol_inds`` with a sorted observation table.
+
+    Returns
+    -------
+    NDArray
+        (4, t, y, x) Stokes cube from all 16 frame sets.
+    """
+    if len(filenames) % 4 * N_per_hwp != 0:
+        raise ValueError(
+            f"Cannot do double-differential calibration without exact sets of {4 * N_per_hwp} frames for each HWP cycle"
+        )
+    # now do double-differential calibration
+    # only load 8 files at a time to avoid running out of memory on large datasets
+    N_hwp_sets = len(filenames) // 4
+    with fits.open(filenames[0]) as hdus:
+        stokes_cube = np.zeros(shape=(4, N_hwp_sets, *hdus[0].shape[-2:]), dtype=hdus[0].data.dtype)
+    iter = tqdm.trange(N_hwp_sets, desc="Double-differential calibration")
+    for i in iter:
+        # prepare input frames
+        ix = i * 4 * N_per_hwp  # offset index
+        summ_dict = {}
+        diff_dict = {}
+        for file in filenames[ix : ix + 4 * N_per_hwp]:
+            stack, hdr = fits.getdata(
+                file,
+                header=True,
+            )
+            key = hdr["P_RTAGL1"]
+            if key in summ_dict:
+                summ_dict[key].append(stack[0])
+                diff_dict[key].append(stack[1])
+            else:
+                summ_dict[key] = [stack[0]]
+                diff_dict[key] = [stack[1]]
+
+        for key, value in summ_dict.items():
+            summ_dict[key] = np.array(value)
+            diff_dict[key] = np.array(diff_dict[key])
+        # double difference (FLC1 - FLC2)
+        Q = 0.5 * (diff_dict[0] - diff_dict[45])
+        IQ = 0.5 * (summ_dict[0] + summ_dict[45])
+        U = 0.5 * (diff_dict[22.5] - diff_dict[67.5])
+        IU = 0.5 * (summ_dict[22.5] + summ_dict[67.5])
+        I = 0.5 * (IQ + IU)
+
+        stokes_cube[0, i : i + N_per_hwp] = I
+        stokes_cube[1, i : i + N_per_hwp] = Q
+        stokes_cube[2, i : i + N_per_hwp] = U
+
+    headers = [fits.getheader(f) for f in filenames]
+    stokes_hdr = combine_frames_headers(headers)
+
+    return write_stokes_products(stokes_cube, stokes_hdr, outname=outname, force=force)
+
+
+def doublediff_average_angles(filenames):
+    if len(filenames) % 4 != 0:
+        raise ValueError(
+            "Cannot do double-differential calibration without exact sets of 4 frames for each HWP cycle"
+        )
+    # make sure we get data in correct order using FITS headers
+    derot_angles = np.asarray([fits.getval(f, "D_IMRPAD") + PUPIL_OFFSET for f in filenames])
+    N_hwp_sets = len(filenames) // 4
+    pas = np.zeros(N_hwp_sets, dtype="f4")
+    for i in range(pas.shape[0]):
+        ix = i * 4
+        pas[i] = average_angle(derot_angles[ix : ix + 4])
+
+    return pas
+
+
+def pol_inds(hwp_angs: ArrayLike, n=4):
     """
     Find consistent runs of FLC and HWP states.
 
-    A consistent run will have either 2 or 4 files per HWP state, and will have exactly 4 HWP states per cycle. Sometimes when VAMPIRES is syncing with CHARIS a HWP state will get skipped, creating partial HWP cycles. This function will return the indices which create consistent HWP cycles from the given list of FLC states, which should already be sorted by time.
+    A consistent run will have either 2 or 4 files per HWP state, and will have exactly 4 HWP states per cycle. Sometimes when FastPDI is syncing with CHARIS a HWP state will get skipped, creating partial HWP cycles. This function will return the indices which create consistent HWP cycles from the given list of FLC states, which should already be sorted by time.
 
     Parameters
     ----------
@@ -333,10 +425,7 @@ def pol_inds(hwp_angs: ArrayLike, n=4, order="QQUU"):
     """
     states = np.asarray(hwp_angs)
     N_cycle = n * 4
-    if order == "QQUU":
-        ang_list = np.repeat([0, 45, 22.5, 67.5], n)
-    elif order == "QUQU":
-        ang_list = np.repeat([0, 22.5, 45, 67.5], n)
+    ang_list = np.repeat([0, 45, 22.5, 67.5], n)
     inds = []
     idx = 0
     while idx <= len(hwp_angs) - N_cycle:
@@ -454,9 +543,6 @@ def make_diff_image(cam1_file, cam2_file, outname=None, force=False):
     if header["MJD"] != header2["MJD"]:
         msg = f"{cam1_file.name} has MJD {header['MJD']}\n{cam2_file.name} has MJD {header2['MJD']}"
         raise ValueError(msg)
-    if header["U_FLCSTT"] != header2["U_FLCSTT"]:
-        msg = f"{cam1_file.name} has FLC state {header['U_FLCSTT']}\n{cam2_file.name} has FLC state {header2['U_FLCSTT']}"
-        raise ValueError(msg)
 
     diff = cam1_frame - cam2_frame
     summ = cam1_frame + cam2_frame
@@ -464,8 +550,8 @@ def make_diff_image(cam1_file, cam2_file, outname=None, force=False):
     stack = np.asarray((summ, diff))
 
     # prepare header
-    del header["U_CAMERA"]
-    hwpang = header["U_HWPANG"]
+    del header["BEAM"]
+    hwpang = header["P_RTAGL1"]
     if hwpang in HWP_POS_STOKES:
         stokes = HWP_POS_STOKES[hwpang]
     else:

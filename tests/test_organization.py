@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from vampires_dpp.organization import dict_from_header, header_table
+from fastpdi_dpp.organization import dict_from_header, header_table
 
 TEST_DIR = Path(__file__).parent
 TEST_FILE = Path(TEST_DIR, "data", "VMPA00021059.fits")

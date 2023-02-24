@@ -1,6 +1,6 @@
 import pytest
 
-from vampires_dpp.util import check_version
+from fastpdi_dpp.util import check_version
 
 
 @pytest.mark.parametrize(

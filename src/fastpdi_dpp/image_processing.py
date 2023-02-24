@@ -10,9 +10,9 @@ from astropy.io import fits
 from astropy.stats import biweight_location
 from numpy.typing import ArrayLike, NDArray
 
-from vampires_dpp.indexing import frame_center
-from vampires_dpp.organization import dict_from_header, header_table
-from vampires_dpp.util import any_file_newer, get_paths
+from fastpdi_dpp.indexing import frame_center
+from fastpdi_dpp.organization import dict_from_header, header_table
+from fastpdi_dpp.util import any_file_newer, get_paths
 
 
 def shift_frame(data: ArrayLike, shift: list | Tuple, **kwargs) -> NDArray:

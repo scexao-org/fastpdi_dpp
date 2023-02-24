@@ -1,13 +1,13 @@
 # Utility
 
 ```{eval-rst}
-.. automodule:: vampires_dpp.constants
+.. automodule:: fastpdi_dpp.constants
     :members:
-.. automodule:: vampires_dpp.indexing
+.. automodule:: fastpdi_dpp.indexing
     :members:
-.. automodule:: vampires_dpp.util
+.. automodule:: fastpdi_dpp.util
     :members:
-.. automodule:: vampires_dpp.wcs
+.. automodule:: fastpdi_dpp.wcs
     :members:
 ```
 

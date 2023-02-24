@@ -8,7 +8,7 @@ from astropy.time import Time
 
 def parallactic_angle(header):
     if "D_IMRPAD" in header:
-        return header["D_IMRPAD"] + header["LONPOLE"] - header["D_IMRPAP"]
+        return header["D_IMRPAD"] + 180 - header["D_IMRPAP"]
     else:
         return parallactic_angle_altaz(header["ALTITUDE"], header["AZIMUTH"])
 
@@ -81,99 +81,11 @@ def parallactic_angle_altaz(alt, az, lat=19.823806):
 
 
 def fix_header(header):
-    # check if the millisecond delimiter is a colon
-    for key in ("UT-STR", "UT-END", "HST-STR", "HST-END"):
-        if header[key].count(":") == 3:
-            tokens = header[key].rpartition(":")
-            header[key] = f"{tokens[0]}.{tokens[2]}"
     # fix UT/HST/MJD being time of file creation instead of typical time
     for key in ("UT", "HST"):
         header[key] = fix_typical_time_iso(header, key)
     header["MJD"] = fix_typical_time_mjd(header)
-    # add RET-ANG1 and similar headers to be more consistent
-    header["DETECTOR"] = f"iXon Ultra 897 - VAMPIRES {header['U_CAMERA']}", "Name of the detector"
-    if "U_EMGAIN" in header:
-        header["DETGAIN"] = header["U_EMGAIN"], "Detector multiplication factor"
-    if "U_HWPANG" in header:
-        header["RET-ANG1"] = header["U_HWPANG"], "Position angle of first retarder plate (deg)"
-        header["RETPLAT1"] = "HWP(NIR)", "Identifier of first retarder plate"
-    if "U_FLCSTT" in header:
-        header["U_FLCANG"] = 0 if header["U_FLCSTT"] == 0 else 45, "VAMPIRES FLC angle (deg)"
     return header
-
-
-def fix_header_file(filename, output: Optional[str] = None, force: bool = False):
-    """
-    Apply fixes to headers based on known bugs
-
-    Fixes
-    -----
-    1. "backpack" header (should be fixed as of 2020??)
-        - Old data have second headers with instrument info
-        - Will merge the second header into the first
-    2. Too many colons in timestamps (should be fixed as of 2023/01/01)
-        - Some STARS data have `UT` and `HST` timestamps like "10:03:34:342"
-        - In this case, the last colon is replaced with a period, e.g. "10:03:34.342"
-    3. "typical" exposure values are file creation time instead of midpoint
-        - For `UT`, `HST`, and `MJD` keys will recalculate the midpoint based on the `*-STR` and `*-END` values
-
-    Parameters
-    ----------
-    filename : pathlike
-        Input FITS file
-    output : Optional[str], optional
-        Output file name, if None will append "_fix" to the input filename, by default None
-
-    Returns
-    -------
-    Path
-        path of the updated FITS file
-    """
-    path = Path(filename)
-    if output is None:
-        output = path.with_name(f"{path.stem}_fix.fits.fz")
-    else:
-        output = Path(output)
-
-    # skip file if output exists!
-    if not force and output.exists() and path.stat().st_mtime < output.stat().st_mtime:
-        return output
-
-    data, hdr = fits.getdata(
-        filename,
-        header=True,
-    )
-    hdr = fix_header(hdr)
-    # save file
-    fits.writeto(output, data, header=hdr, overwrite=True)
-    return output
-
-
-def fix_old_headers(filename, output=None, skip=False):
-    path = Path(filename)
-    if output is None:
-        output = path.with_name(f"{path.stem}_hdr.fits.fz")
-
-    if skip and output.is_file() and path.stat().st_mtime < output.stat().st_mtime:
-        return output
-
-    # merge secondary headers
-    with fits.open(path) as hdus:
-        data = hdus[0].data
-        hdr = hdus[0].header
-        for i in range(1, len(hdus)):
-            sec_hdr = hdus[i].header
-            for k, v in sec_hdr.items():
-                if k not in hdr:
-                    hdr[k] = v
-
-    ra_tokens = hdr["RA"].split(".")
-    hdr["RA"] = ":".join(ra_tokens[:-1]) + f".{ra_tokens[-1]}"
-    dec_tokens = hdr["DEC"].split(".")
-    hdr["DEC"] = ":".join(dec_tokens[:-1]) + f".{dec_tokens[-1]}"
-    hdr["U_CAMERA"] = 1 if "cam1" in filename else 2
-    fits.writeto(output, data, header=hdr, overwrite=True)
-    return output
 
 
 def fix_typical_time_iso(hdr, key):

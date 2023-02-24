@@ -4,6 +4,7 @@ import multiprocessing as mp
 from os import PathLike
 from pathlib import Path
 from typing import Optional, Tuple
+from numpy.typing import NDArray
 
 import astropy.units as u
 import cv2
@@ -11,20 +12,19 @@ import numpy as np
 import pandas as pd
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.stats import biweight_location
 from astropy.time import Time
-from astroscrappy import detect_cosmics
 from tqdm.auto import tqdm
+from astroscrappy import detect_cosmics
 
-from vampires_dpp.constants import DEFAULT_NPROC, READNOISE, SUBARU_LOC
-from vampires_dpp.headers import fix_header
-from vampires_dpp.image_processing import (
+from fastpdi_dpp.constants import DEFAULT_NPROC, SUBARU_LOC
+from fastpdi_dpp.headers import fix_header
+from fastpdi_dpp.indexing import frame_center
+from fastpdi_dpp.image_processing import (
     collapse_cube,
     collapse_frames_files,
-    correct_distortion_cube,
 )
-from vampires_dpp.util import get_paths
-from vampires_dpp.wcs import apply_wcs, get_coord_header
+from fastpdi_dpp.util import get_paths
+from fastpdi_dpp.wcs import apply_wcs, get_coord_header
 
 __all__ = [
     "calibrate_file",
@@ -45,29 +45,31 @@ def filter_empty_frames(cube):
 
 def calibrate_file(
     filename: str,
-    hdu: int = 0,
+    hdu: int = 1,
     dark_filename: Optional[str] = None,
     flat_filename: Optional[str] = None,
-    transform_filename: Optional[str] = None,
     force: bool = False,
     bpfix: bool = False,
-    deinterleave: bool = False,
     coord: Optional[SkyCoord] = None,
     **kwargs,
 ):
     path, outpath = get_paths(filename, suffix="calib", **kwargs)
     if not force and outpath.is_file() and path.stat().st_mtime < outpath.stat().st_mtime:
         return outpath
-    # have to also check if deinterleaving
-    if deinterleave:
-        outpath_FLC1 = outpath.with_stem(f"{outpath.stem}_FLC1")
-        outpath_FLC2 = outpath.with_stem(f"{outpath.stem}_FLC2")
-        if not force and outpath_FLC1.is_file() and outpath_FLC2.is_file():
-            return outpath_FLC1, outpath_FLC2
 
-    raw_cube, header = fits.getdata(path, ext=hdu, header=True)
+    header = fits.getheader(path, ext=hdu)
+    # if wollaston is in, assume PDI mode
+    if header["X_IRCWOL"] == "IN":
+        outpath_left = outpath.with_stem(f"{outpath.stem}_left")
+        outpath_right = outpath.with_stem(f"{outpath.stem}_right")
+        if not force and outpath_left.is_file() and outpath_right.is_file():
+            return outpath_left, outpath_right
+
+    cube = fits.getdata(path, ext=hdu)
+    cube = filter_empty_frames(cube)
+    cube[:, :2] = 0
     # fix header
-    header = apply_wcs(fix_header(header))
+    header = fix_header(header)
     time = Time(header["MJD"], format="mjd", scale="ut1", location=SUBARU_LOC)
     if coord is None:
         coord_now = get_coord_header(header, time)
@@ -76,92 +78,80 @@ def calibrate_file(
 
     header["RA"] = coord_now.ra.to_string(unit=u.hourangle, sep=":")
     header["DEC"] = coord_now.dec.to_string(unit=u.deg, sep=":")
-    # Discard frames in OG VAMPIRES
-    if "U_FLCSTT" in header:
-        cube = raw_cube.astype("f4")
-    else:
-        cube = raw_cube[2:].astype("f4")
-    # remove empty and NaN frames
-    cube = filter_empty_frames(cube)
     # dark correction
     if dark_filename is not None:
         dark_path = Path(dark_filename)
-        dark = fits.getdata(dark_path).astype("f4")
+        dark = fits.getdata(dark_path)
         cube -= dark
     # flat correction
     if flat_filename is not None:
         flat_path = Path(flat_filename)
-        flat = fits.getdata(flat_path).astype("f4")
+        flat = fits.getdata(flat_path)
+        flat[flat < 0.1] = 1e4
         cube /= flat
     # bad pixel correction
     if bpfix:
-        mask, _ = detect_cosmics(
-            cube.mean(0),
-            gain=header.get("DETGAIN", 4.5),
-            readnoise=READNOISE,
-            satlevel=2**16 * header.get("DETGAIN", 4.5),
-            niter=1,
-        )
-        cube_copy = cube.copy()
+        mean_frame = np.mean(cube, axis=0)
+        mask, _ = fix_bad_pixels(mean_frame, header)
         for i in range(cube.shape[0]):
-            smooth_im = cv2.medianBlur(cube_copy[i], 5)
-            cube[i, mask] = smooth_im[mask]
-    # flip cam 1 data
-    if header["U_CAMERA"] == 1:
-        cube = np.flip(cube, axis=-2)
-    # distortion correction
-    if transform_filename is not None:
-        transform_path = Path(transform_filename)
-        distort_coeffs = pd.read_csv(transform_path, index_col=0)
-        params = distort_coeffs.loc[f"cam{header['U_CAMERA']:.0f}"]
-        cube, header = correct_distortion_cube(cube, *params, header=header)
-
+            low_pass = cv2.medianBlur(cube[i], 3)
+            cube[i, mask] = low_pass[mask]
+    # flip data
+    cube = np.flip(cube, axis=-2)
+    header = apply_wcs(header)
     # deinterleave
-    if deinterleave:
-        header["U_FLCSTT"] = 1, "FLC state (1 or 2)"
-        header["U_FLCANG"] = 0, "VAMPIRES FLC angle (deg)"
-        fits.writeto(
-            outpath_FLC1,
-            cube[::2],
-            header=header,
-            overwrite=True,
-        )
+    if header["X_IRCWOL"] == "IN":
+        midx = cube.shape[-1] // 2
+        left = cube.copy()
+        left[..., midx:] = np.nan
+        header["BEAM"] = "left"
+        fits.writeto(outpath_left, left, header, overwrite=True)
 
-        header["U_FLCSTT"] = 2, "FLC state (1 or 2)"
-        header["U_FLCANG"] = 45, "VAMPIRES FLC angle (deg)"
-
-        fits.writeto(
-            outpath_FLC2,
-            cube[1::2],
-            header=header,
-            overwrite=True,
-        )
-        return outpath_FLC1, outpath_FLC2
+        right = cube
+        right[..., :midx] = np.nan
+        header["BEAM"] = "right"
+        fits.writeto(outpath_right, right, header, overwrite=True)
+        return outpath_left, outpath_right
 
     fits.writeto(outpath, cube, header=header, overwrite=True)
     return outpath
+
+
+def fix_bad_pixels(frame, header, pad_width=3, **kwargs):
+    padded = np.pad(frame, pad_width=pad_width, mode="reflect")
+    # expected noise frome read noise and Poisson dark current
+    read_noise = 0.17**2
+    dark_noise = 7.5 * header["DET-NSMP"] * header["EXPTIME"] * header["DETGAIN"]
+    expected_noise = np.sqrt(read_noise**2 + dark_noise)
+    default_kwargs = {
+        "niter": 5,
+        "sepmed": False,
+        "objlim": 2,
+        "gain": 0.48,
+        "readnoise": expected_noise,
+    }
+    default_kwargs.update(**kwargs)
+    mask, clean_frame = detect_cosmics(padded, **kwargs)
+    # depad
+    mask = mask[pad_width:-pad_width, pad_width:-pad_width]
+    clean_frame = clean_frame[pad_width:-pad_width, pad_width:-pad_width]
+    return mask, clean_frame
 
 
 def make_dark_file(filename: str, force=False, **kwargs):
     path, outpath = get_paths(filename, suffix="collapsed", **kwargs)
     if not force and outpath.is_file() and path.stat().st_mtime < outpath.stat().st_mtime:
         return outpath
-    raw_cube, header = fits.getdata(
+    cube, header = fits.getdata(
         path,
-        ext=0,
+        ext=1,
         header=True,
     )
-    if "U_FLCSTT" in header:
-        cube = raw_cube.astype("f4")
-    else:
-        cube = raw_cube[1:].astype("f4")
+    cube = filter_empty_frames(cube)
+    cube[:, :2] = 0
     master_dark, header = collapse_cube(cube, header=header, **kwargs)
-    _, clean_dark = detect_cosmics(
-        master_dark,
-        gain=header.get("DETGAIN", 4.5),
-        readnoise=READNOISE,
-        satlevel=2**16 * header.get("DETGAIN", 4.5),
-    )
+    mask, clean_dark = fix_bad_pixels(master_dark, header)
+
     fits.writeto(
         outpath,
         clean_dark,
@@ -175,15 +165,12 @@ def make_flat_file(filename: str, force=False, dark_filename=None, **kwargs):
     path, outpath = get_paths(filename, suffix="collapsed", **kwargs)
     if not force and outpath.is_file() and path.stat().st_mtime < outpath.stat().st_mtime:
         return outpath
-    raw_cube, header = fits.getdata(
+    cube, header = fits.getdata(
         path,
-        ext=0,
+        ext=1,
         header=True,
     )
-    if "U_FLCSTT" in header:
-        cube = raw_cube.astype("f4")
-    else:
-        cube = raw_cube[1:].astype("f4")
+    cube = filter_empty_frames(cube)
     if dark_filename is not None:
         dark_path = Path(dark_filename)
         header["MDARK"] = (dark_path.name, "file used for dark subtraction")
@@ -191,14 +178,11 @@ def make_flat_file(filename: str, force=False, dark_filename=None, **kwargs):
             dark_path,
         )
         cube = cube - master_dark
+    cube[:, :2] = 0
     master_flat, header = collapse_cube(cube, header=header, **kwargs)
-    _, clean_flat = detect_cosmics(
-        master_flat,
-        gain=header.get("DETGAIN", 4.5),
-        readnoise=READNOISE,
-        satlevel=2**16 * header.get("DETGAIN", 4.5),
-    )
-    clean_flat /= biweight_location(clean_flat, c=6, ignore_nan=True)
+    mask, clean_flat = fix_bad_pixels(master_flat, header)
+    # normalize flat field
+    clean_flat /= np.nanmedian(clean_flat)
 
     fits.writeto(
         outpath,
@@ -213,8 +197,9 @@ def sort_calib_files(filenames: list[PathLike]) -> dict[Tuple, Path]:
     darks_dict = {}
     for filename in filenames:
         path = Path(filename)
-        header = fits.getheader(path)
-        key = (header["U_CAMERA"], header["U_EMGAIN"], header["U_AQTINT"])
+        ext = 1 if ".fits.fz" in path.name else 0
+        header = fits.getheader(path, ext=ext)
+        key = (header["DETGAIN"], header["EXPTIME"] * header["DET-NSMP"])
         if key in darks_dict:
             darks_dict[key].append(path)
         else:
@@ -246,8 +231,8 @@ def make_master_dark(
     with mp.Pool(num_proc) as pool:
         jobs = []
         for key, filelist in file_inputs.items():
-            cam, gain, exptime = key
-            outname = outdir / f"{name}_em{gain:.0f}_{exptime/1e3:05.0f}ms_cam{cam:.0f}.fits"
+            gain, exptime = key
+            outname = outdir / f"{name}_em{gain:.0f}_{exptime*1e3:05.0f}ms.fits"
             outnames[key] = outname
             if not force and outname.is_file():
                 continue
@@ -293,7 +278,7 @@ def make_master_flat(
     if master_darks is not None:
         inputs = sort_calib_files(master_darks)
         for key in file_inputs.keys():
-            master_dark_inputs[key] = inputs.get(key, None)
+            master_dark_inputs[key] = inputs[key][0] if key in inputs else None
     if output_directory is not None:
         outdir = Path(output_directory)
         outdir.mkdir(parents=True, exist_ok=True)
@@ -306,8 +291,8 @@ def make_master_flat(
     with mp.Pool(num_proc) as pool:
         jobs = []
         for key, filelist in file_inputs.items():
-            cam, gain, exptime = key
-            outname = outdir / f"{name}_em{gain:.0f}_{exptime/1e3:05.0f}ms_cam{cam:.0f}.fits"
+            gain, exptime = key
+            outname = outdir / f"{name}_em{gain:.0f}_{exptime*1e3:05.0f}ms.fits"
             outnames[key] = outname
             if not force and outname.is_file():
                 continue

@@ -4,7 +4,7 @@ import pytest
 import tomli
 from serde.toml import to_toml
 
-from vampires_dpp.pipeline.config import *
+from fastpdi_dpp.pipeline.config import *
 
 
 class TestOutputDirectory:

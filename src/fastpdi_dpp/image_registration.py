@@ -6,14 +6,14 @@ from numpy.typing import ArrayLike
 from skimage.measure import centroid
 from skimage.registration import phase_cross_correlation
 
-from vampires_dpp.image_processing import shift_cube
-from vampires_dpp.indexing import (
+from fastpdi_dpp.image_processing import shift_cube
+from fastpdi_dpp.indexing import (
     cutout_slice,
     frame_center,
     lamd_to_pixel,
     window_slices,
 )
-from vampires_dpp.util import get_paths
+from fastpdi_dpp.util import get_paths
 
 
 def satellite_spot_offsets(
@@ -26,13 +26,23 @@ def satellite_spot_offsets(
     smooth: bool = False,
     **kwargs,
 ):
-
     slices = window_slices(cube[0], center=center, **kwargs)
     center = frame_center(cube)
 
+    # step 1: get initial estimate from mean-image
+    mean_frame = np.mean(cube, axis=0)
+    offset_guesses = np.empty((len(slices), 2), "f4")
+    for j, sl in enumerate(slices):
+        offset_guesses[j] = offset_centroid(mean_frame, sl)
+    new_center = np.mean(offset_guesses, axis=0)
+    offset_guess = new_center - center
+
+    # refine windows from this estimate
+    slices = window_slices(mean_frame, center=new_center, **kwargs)
+
     if smooth:
         for i in range(cube.shape[0]):
-            cube[i] = cv2.GaussianBlur(cube[i], (0, 0), 3)
+            cube[i] = cv2.medianBlur(cube[i], 3)
 
     offsets = np.zeros((cube.shape[0], len(slices), 2))
 
@@ -72,6 +82,10 @@ def satellite_spot_offsets(
         for i, frame in enumerate(cube):
             for j, sl in enumerate(slices):
                 offsets[i, j] += offset_modelfit(frame, sl, method, fitter) - center
+
+    # if offsets too large, replace with guess from above
+    mask = np.abs(offsets - offset_guess) > 10
+    offsets = np.where(mask, offset_guess[None, None, :], offsets)
 
     return offsets
 
@@ -228,7 +242,7 @@ def measure_offsets_file(filename, method="peak", coronagraphic=False, force=Fal
     else:
         refidx = np.nanargmax(np.nanmax(cube, axis=(-2, -1)))
     if coronagraphic:
-        kwargs["radius"] = lamd_to_pixel(kwargs["radius"], header["U_FILTER"])
+        kwargs["radius"] = lamd_to_pixel(kwargs["radius"], header["X_IRCFLT"])
         offsets = satellite_spot_offsets(cube, method=method, refidx=refidx, **kwargs)
     else:
         offsets = psf_offsets(cube, method=method, refidx=refidx, **kwargs)

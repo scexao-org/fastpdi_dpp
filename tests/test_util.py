@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from vampires_dpp.util import average_angle, check_version, get_paths
+from fastpdi_dpp.util import average_angle, check_version, get_paths
 
 
 def test_average_angle():

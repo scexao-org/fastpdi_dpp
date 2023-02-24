@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from vampires_dpp.constants import FILTER_ANGULAR_SIZE, PIXEL_SCALE, SATSPOT_ANGLE
+from fastpdi_dpp.constants import FILTER_ANGULAR_SIZE, PIXEL_SCALE, SATSPOT_ANGLE
 
 
 def frame_center(image: ArrayLike):
@@ -96,7 +96,7 @@ def window_centers(center, radius, theta=SATSPOT_ANGLE, n=4, **kwargs):
         list of centers (y, x) for each spot
     """
     # get the angles for each branch
-    theta = np.linspace(0, 2 * np.pi, n, endpoint=False) + np.deg2rad(theta)
+    theta = np.linspace(np.pi / 2, 5 * np.pi / 2, n, endpoint=False) + np.deg2rad(theta)
     xs = radius * np.cos(theta) + center[1]
     ys = radius * np.sin(theta) + center[0]
     return list(zip(ys, xs))

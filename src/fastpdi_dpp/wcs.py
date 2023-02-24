@@ -5,7 +5,7 @@ from astropy.coordinates import Angle, SkyCoord
 from astropy.time import Time
 from astroquery.vizier import Vizier
 
-from vampires_dpp.constants import PIXEL_SCALE, PUPIL_OFFSET, SUBARU_LOC
+from fastpdi_dpp.constants import PIXEL_SCALE, PUPIL_OFFSET, SUBARU_LOC
 
 
 def apply_wcs(header, pxscale=PIXEL_SCALE, pupil_offset=PUPIL_OFFSET):

@@ -1,6 +1,6 @@
 # Calibration
 
 ```{eval-rst}
-.. automodule:: vampires_dpp.calibration
+.. automodule:: fastpdi_dpp.calibration
     :members:
 ```

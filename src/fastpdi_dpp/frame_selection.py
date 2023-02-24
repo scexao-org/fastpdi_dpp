@@ -1,8 +1,8 @@
 import numpy as np
 from astropy.io import fits
 
-from vampires_dpp.indexing import cutout_slice, lamd_to_pixel, window_slices
-from vampires_dpp.util import get_paths
+from fastpdi_dpp.indexing import cutout_slice, lamd_to_pixel, window_slices
+from fastpdi_dpp.util import get_paths
 
 
 def measure_metric(cube, metric="l2norm", center=None, window=None, **kwargs):
@@ -58,7 +58,7 @@ def measure_metric_file(
         header=True,
     )
     if coronagraphic:
-        kwargs["radius"] = lamd_to_pixel(kwargs["radius"], header["U_FILTER"])
+        kwargs["radius"] = lamd_to_pixel(kwargs["radius"], header["X_IRCFLT"])
         metrics = measure_satellite_spot_metrics(cube, metric=metric, **kwargs)
     else:
         metrics = measure_metric(cube, metric=metric, **kwargs)

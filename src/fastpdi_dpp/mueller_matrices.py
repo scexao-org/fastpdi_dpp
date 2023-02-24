@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from vampires_dpp.constants import PUPIL_OFFSET
+from fastpdi_dpp.constants import PUPIL_OFFSET
 
 __all__ = (
     "hwp",
