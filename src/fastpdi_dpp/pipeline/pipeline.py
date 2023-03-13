@@ -208,42 +208,8 @@ class Pipeline(PipelineOptions):
         self.pxscale = PIXEL_SCALE
         self.pupil_offset = PUPIL_OFFSET
         self.coord = None
-        if self.target is not None and self.target.strip() != "":
-            self.coord = get_gaia_astrometry(self.target)
-        # if "astrometry" in self.config:
-        #     astrom_config = self.config["astrometry"]
-        #     self.pxscale = astrom_config.get("pixel_scale", PIXEL_SCALE)  # mas/px
-        #     self.pupil_offset = astrom_config.get("pupil_offset", PUPIL_OFFSET)  # deg
-        #     # if custom coord
-        #     if "coord" in astrom_config:
-        #         coord_dict = astrom_config["coord"]
-        #         plx = coord_dict.get("plx", None)
-        #         if plx is not None:
-        #             distance = (plx * u.mas).to(u.parsec, equivalencies=u.parallax())
-        #         else:
-        #             distance = None
-        #         if "pm_ra" in coord_dict:
-        #             pm_ra = coord_dict["pm_ra"] * u.mas / u.year
-        #         else:
-        #             pm_ra = None
-        #         if "pm_dec" in coord_dict:
-        #             pm_dec = coord_dict["pm_ra"] * u.mas / u.year
-        #         else:
-        #             pm_dec = None
-        #         self.coord = SkyCoord(
-        #             ra=coord_dict["ra"] * u.deg,
-        #             dec=coord_dict["dec"] * u.deg,
-        #             pm_ra_cosdec=pm_ra,
-        #             pm_dec=pm_dec,
-        #             distance=distance,
-        #             frame=coord_dict.get("frame", "ICRS"),
-        #             obstime=coord_dict.get("obstime", "J2016"),
-        #         )
-        #     elif "target" in self.config:
-        #         self.coord = get_gaia_astrometry(self.config["target"])
-        # elif "target" in self.config:
-        #     # query from GAIA DR3
-        #     self.coord = get_gaia_astrometry(self.config["target"])
+        if self.coordinate is not None:
+            self.coord = self.coordinate.get_coord()
 
     def calibrate_one(self, path, fileinfo, tripwire=False):
         self.logger.info("Starting data calibration")
@@ -383,7 +349,7 @@ class Pipeline(PipelineOptions):
         if len(left_table) > 0:
             outname1 = self.products.output_directory / f"{self.name}_adi_cube_left.fits"
             combine_frames_files(left_table["path"], output=outname1, force=force)
-            derot_angles1 = np.asarray(left_table["D_IMRPAD"] + PUPIL_OFFSET)
+            derot_angles1 = np.asarray(left_table["PARANG"])
             fits.writeto(
                 outname1.with_stem(f"{outname1.stem}_angles"),
                 derot_angles1.astype("f4"),
@@ -394,7 +360,7 @@ class Pipeline(PipelineOptions):
         if len(right_table) > 0:
             outname2 = self.products.output_directory / f"{self.name}_adi_cube_right.fits"
             combine_frames_files(right_table["path"], output=outname2, force=force)
-            derot_angles2 = np.asarray(right_table["D_IMRPAD"] + PUPIL_OFFSET)
+            derot_angles2 = np.asarray(right_table["PARANG"])
             fits.writeto(
                 outname2.with_stem(f"{outname2.stem}_angles"),
                 derot_angles2.astype("f4"),
@@ -424,7 +390,12 @@ class Pipeline(PipelineOptions):
 
         # 3. Do higher-order correction
         if self.products is not None:
-            self.polarimetry_doublediff(outdir, force=tripwire, N_per_hwp=config.N_per_hwp)
+            self.polarimetry_doublediff(
+                outdir,
+                force=tripwire,
+                N_per_hwp=config.N_per_hwp,
+                derotate_pa=config.derotate_pa
+            )
 
         self.logger.info("Finished PDI")
 
@@ -581,7 +552,7 @@ class Pipeline(PipelineOptions):
     # header[f"VPP_P{stokes}"] = pX, f"I -> {stokes} IP correction"
     # fits.writeto(outname, stack, header=header, overwrite=True)
 
-    def polarimetry_doublediff(self, outdir, force=False, N_per_hwp=1, **kwargs):
+    def polarimetry_doublediff(self, force=False, N_per_hwp=1, derotate_pa=False, **kwargs):
         # sort table
         table = header_table(self.diff_files_ip, quiet=True)
         # coadd subsequent hwp angles
@@ -635,7 +606,7 @@ class Pipeline(PipelineOptions):
                 header=True,
             )
             stokes_cube_collapsed, header = collapse_stokes_cube(
-                stokes_cube, stokes_angles, header=header
+                stokes_cube, stokes_angles, header=header, derotate_pa=derotate_pa
             )
             write_stokes_products(
                 stokes_cube_collapsed,

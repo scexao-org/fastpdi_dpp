@@ -153,7 +153,7 @@ def radial_stokes(stokes_cube: ArrayLike, phi: Optional[float] = None, **kwargs)
     NDArray, NDArray
         Returns the tuple (Qphi, Uphi)
     """
-    thetas = frame_angles(stokes_cube)
+    thetas = frame_angles(stokes_cube, conv="astro")
     if phi is None:
         phi = optimize_Uphi(stokes_cube, thetas, **kwargs)
 
@@ -193,18 +193,24 @@ def rotate_stokes(stokes_cube, theta):
     return out
 
 
-def collapse_stokes_cube(stokes_cube, pa, header=None):
+def collapse_stokes_cube(stokes_cube, pa, derotate_pa=False, header=None):
     stokes_out = np.empty_like(stokes_cube, shape=(stokes_cube.shape[0], *stokes_cube.shape[-2:]))
-    for s in range(stokes_cube.shape[0]):
-        derot = derotate_cube(stokes_cube[s], pa)
-        stokes_out[s] = np.nanmedian(derot, axis=0, overwrite_input=True)
-    # fix PUPIL_OFFSET effect
-    stokes_corr = rotate_stokes(stokes_out, np.deg2rad(PUPIL_OFFSET))
+    # derotate stokes vectors
+    stokes_cube_derot = np.empty_like(stokes_cube)
+    for i in range(stokes_cube.shape[1]):
+        derot_angle = PUPIL_OFFSET
+        if derotate_pa:
+            derot_angle += pa[i]
+        stokes_cube_derot[:, i] = rotate_stokes(stokes_cube[:, i], np.deg2rad(derot_angle))
+
+    for s in range(stokes_cube_derot.shape[0]):
+        derot = derotate_cube(stokes_cube_derot[s], pa)
+        stokes_out[s] = np.median(derot, axis=0, overwrite_input=True)
     # now that cube is derotated we can apply WCS
     if header is not None:
-        apply_wcs(header, pupil_offset=None)
+        apply_wcs(header)
 
-    return stokes_corr, header
+    return stokes_out, header
 
 
 def polarization_calibration_triplediff(
@@ -303,7 +309,7 @@ def triplediff_average_angles(filenames):
             "Cannot do triple-differential calibration without exact sets of 8 frames for each HWP cycle"
         )
     # make sure we get data in correct order using FITS headers
-    derot_angles = np.asarray([fits.getval(f, "D_IMRPAD") + PUPIL_OFFSET for f in filenames])
+    derot_angles = np.asarray([fits.getval(f, "PARANG") for f in filenames])
     N_hwp_sets = len(filenames) // 8
     pas = np.zeros(N_hwp_sets, dtype="f4")
     for i in range(pas.shape[0]):
@@ -440,7 +446,7 @@ def pol_inds(hwp_angs: ArrayLike, n=4):
 
 def polarization_calibration_model(filename):
     header = fits.getheader(filename)
-    pa = np.deg2rad(header["D_IMRPAD"] + 180 - header["D_IMRPAP"])
+    pa = np.deg2rad(header["PARANG"])
     altitude = np.deg2rad(header["ALTITUDE"])
     hwp_theta = np.deg2rad(header["U_HWPANG"])
     imr_theta = np.deg2rad(header["D_IMRANG"])

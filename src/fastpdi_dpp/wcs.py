@@ -5,10 +5,10 @@ from astropy.coordinates import Angle, SkyCoord
 from astropy.time import Time
 from astroquery.vizier import Vizier
 
-from fastpdi_dpp.constants import PIXEL_SCALE, PUPIL_OFFSET, SUBARU_LOC
+from fastpdi_dpp.constants import PIXEL_SCALE, SUBARU_LOC
 
 
-def apply_wcs(header, pxscale=PIXEL_SCALE, pupil_offset=PUPIL_OFFSET):
+def apply_wcs(header, pxscale=PIXEL_SCALE, parang=0):
     nx = header["NAXIS1"]
     ny = header["NAXIS2"]
 
@@ -21,11 +21,10 @@ def apply_wcs(header, pxscale=PIXEL_SCALE, pupil_offset=PUPIL_OFFSET):
     w.wcs.cunit = ["deg", "deg"]
     w.wcs.cdelt = [-pxscale / 3.6e6, pxscale / 3.6e6]
     w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    if pupil_offset is not None:
-        ang = np.deg2rad(header["D_IMRPAD"] + pupil_offset)
-        cosang = np.cos(ang)
-        sinang = np.sin(ang)
-        w.wcs.pc = [[cosang, -sinang], [sinang, cosang]]
+    ang = np.deg2rad(-parang)
+    cosang = np.cos(ang)
+    sinang = np.sin(ang)
+    w.wcs.pc = [[cosang, -sinang], [sinang, cosang]]
     header.update(w.to_header())
     return header
 
@@ -48,10 +47,6 @@ def derotate_wcs(header, angle):
     return header
 
 
-def apply_wcs_file(filename, output=None, skip=False):
-    pass
-
-
 def get_coord_header(header, time=None):
     coord = SkyCoord(
         ra=header["RA"],
@@ -64,10 +59,14 @@ def get_coord_header(header, time=None):
     return coord
 
 
-def get_gaia_astrometry(target, catalog="I/355/gaiadr3"):
+GAIA_CATALOGS = {"dr1": "I/337/gaia", "dr2": "I/345/gaia2", "dr3": "I/355/gaiadr3"}
+
+
+def get_gaia_astrometry(target, catalog="dr3", radius=1):
     # get precise RA and DEC
-    # Try DR3
-    gaia_catalog_list = Vizier.query_object(target, radius=1 * u.arcsec, catalog=catalog)
+    gaia_catalog_list = Vizier.query_object(
+        target, radius=radius * u.arcsec, catalog=GAIA_CATALOGS[catalog.lower()]
+    )
     gaia_info = gaia_catalog_list[0][0]  # first row of first table
     plx = np.abs(gaia_info["Plx"]) * u.mas
     coord = SkyCoord(

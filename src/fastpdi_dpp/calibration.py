@@ -16,14 +16,14 @@ from astropy.time import Time
 from tqdm.auto import tqdm
 from astroscrappy import detect_cosmics
 
-from fastpdi_dpp.constants import DEFAULT_NPROC, SUBARU_LOC
-from fastpdi_dpp.headers import fix_header
+from fastpdi_dpp.constants import DEFAULT_NPROC, SUBARU_LOC, PA_OFFSET
+from fastpdi_dpp.headers import fix_header, parallactic_angle
 from fastpdi_dpp.indexing import frame_center
 from fastpdi_dpp.image_processing import (
     collapse_cube,
     collapse_frames_files,
 )
-from fastpdi_dpp.util import get_paths
+from fastpdi_dpp.util import get_paths, wrap_angle
 from fastpdi_dpp.wcs import apply_wcs, get_coord_header
 
 __all__ = [
@@ -78,6 +78,11 @@ def calibrate_file(
 
     header["RA"] = coord_now.ra.to_string(unit=u.hourangle, sep=":")
     header["DEC"] = coord_now.dec.to_string(unit=u.deg, sep=":")
+    parang = parallactic_angle(time, coord_now)
+    header["PARANG"] = parang, "[deg] derotation angle for North up"
+    header["PA"] = wrap_angle(parang - PA_OFFSET), "[deg] parallactic angle of target"
+    header = apply_wcs(header, parang=parang)
+
     # dark correction
     if dark_filename is not None:
         dark_path = Path(dark_filename)

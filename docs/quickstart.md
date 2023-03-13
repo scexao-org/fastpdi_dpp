@@ -56,7 +56,7 @@ Since FastPDI uses EM-CCDs, the camera gain and exposure settings change the noi
 
 If you use the prescribed folder structure above, creating your files can be done like so
 ```
-dpp calib -o master_cals --darks=darks/raw/*.fits --flats=flats/raw/*.fits
+dpp calib -o master_cals --darks darks/raw/*.fits --flats flats/raw/*.fits
 ```
 
 This will produce a series of calibration files in the `master_cals/` folder
@@ -80,10 +80,27 @@ master_cals
 
 ## Set up configuration files
 
-After your data has been downloaded and sorted, you'll want to create configuration files for the data you want to process. To get started quickly, we provide templates for common observing scenarios that can be produced with `dpp new`. In the example below, we are creating a PDI template with the 113 mas Lyot coronagraph.
+After your data has been downloaded and sorted, you'll want to create configuration files for the data you want to process. To get started quickly, we provide templates for common observing scenarios that can be produced interactively with `fpp new`. In the example below, we are creating a PDI template with the 55 mas Lyot coronagraph.
 
 ```
-dpp new 20230101_ABAur.toml -o "AB Aur" -t pdi -c 113 --preview
+fpp new 20230101_ABAur.toml
+```
+```
+Choose a starting template [singlecam/pdi/halpha]: pdi
+Path-friendly name for this reduction [20230101_ABAur]: 
+SIMBAD-friendly object name (optional): AB Aur
+Do you have dark files? [Y/n]: 
+Enter path to cam1 dark (optional): ../master_cals/master_dark_em300_000100ms_cam1.fits
+Enter path to cam2 dark [../master_cals/master_dark_em300_000100ms_cam2.fits]: 
+Do you have flat files? [Y/n]: y
+Enter path to cam1 flat (optional): ../master_cals/master_flat_cam1.fits
+Enter path to cam2 dark [../master_cals/master_flat_cam2.fits]: 
+Did you use a coronagraph? [y/N]: y
+  Enter coronagraph IWA (mas) [36/55/92/129]: 55
+Did you use satellite spots? [Y/n]: 
+  Enter satspot radius (lam/D) [15.8]: 11.2
+  Enter satspot amplitude (nm) [50]: 
+20230101_ABAur.toml
 ```
 
 At this point, we highly recommend viewing the [pipeline options]() and making adjustments to your TOML file for your object and observation. The processing pipeline is not a panacea- the defaults in the templates are best guesses in ideal situations.
@@ -94,6 +111,12 @@ At this point, we highly recommend viewing the [pipeline options]() and making a
 {{dppnew_help}}
 
 ## Running the pipeline
+
+```{admonition} Clean up files
+:class: tip
+
+Before running files through the pipeline, it is _highly_ recommended to inspect through your raw data and discard errant cubes and cubes with poor seeing. Doing this ahead of time saves on processing time and avoids errors.
+```
 
 After you've selected your configuration options, you can run the pipeline from the command line with `dpp run`
 
