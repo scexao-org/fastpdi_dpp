@@ -393,8 +393,7 @@ class Pipeline(PipelineOptions):
             self.polarimetry_doublediff(
                 force=tripwire,
                 N_per_hwp=config.N_per_hwp,
-                order=config.order,
-                derotate_pa=config.derotate_pa,
+                derotate_pa=config.derotate_pa
             )
 
         self.logger.info("Finished PDI")
