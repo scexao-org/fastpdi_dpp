@@ -391,10 +391,10 @@ class Pipeline(PipelineOptions):
         # 3. Do higher-order correction
         if self.products is not None:
             self.polarimetry_doublediff(
-                outdir,
                 force=tripwire,
                 N_per_hwp=config.N_per_hwp,
-                derotate_pa=config.derotate_pa
+                order=config.order,
+                derotate_pa=config.derotate_pa,
             )
 
         self.logger.info("Finished PDI")
