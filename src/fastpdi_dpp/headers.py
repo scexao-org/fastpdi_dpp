@@ -5,15 +5,18 @@ import numpy as np
 from astropy.io import fits
 from astropy.time import Time
 
-
-def parallactic_angle(header):
-    if "D_IMRPAD" in header:
-        return header["D_IMRPAD"] + 180 - header["D_IMRPAP"]
-    else:
-        return parallactic_angle_altaz(header["ALTITUDE"], header["AZIMUTH"])
+from fastpdi_dpp.constants import PA_OFFSET, SUBARU_LOC
+from fastpdi_dpp.util import wrap_angle
 
 
-def parallactic_angle_hadec(ha, dec, lat=19.823806):
+def parallactic_angle(time, coord, pa_offset=PA_OFFSET):
+    pa = parallactic_angle_hadec(
+        time.sidereal_time("apparent").hourangle - coord.ra.hourangle, coord.dec.deg
+    )
+    return wrap_angle(pa + pa_offset)
+
+
+def parallactic_angle_hadec(ha, dec, lat=SUBARU_LOC.lat.deg):
     r"""
     Calculate parallactic angle using the hour-angle and declination directly
 
@@ -44,7 +47,7 @@ def parallactic_angle_hadec(ha, dec, lat=19.823806):
     return np.rad2deg(pa)
 
 
-def parallactic_angle_altaz(alt, az, lat=19.823806):
+def parallactic_angle_altaz(alt, az, lat=SUBARU_LOC.lat.deg):
     r"""
     Calculate parallactic angle using the altitude/elevation and azimuth directly
 

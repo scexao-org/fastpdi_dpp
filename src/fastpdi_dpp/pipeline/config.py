@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import astropy.units as u
+from astropy.coordinates import Angle, SkyCoord
 from serde import field, serialize
 from serde.toml import to_toml
 
@@ -22,6 +24,114 @@ class OutputDirectory:
 
     def to_toml(self) -> str:
         return to_toml(self)
+
+
+@serialize
+@dataclass
+class CamFileInput:
+    cam1: Optional[Path] = field(default=None, skip_if_default=True)
+    cam2: Optional[Path] = field(default=None, skip_if_default=True)
+
+    def __post_init__(self):
+        if self.cam1 is not None:
+            self.cam1 = Path(self.cam1)
+
+        if self.cam2 is not None:
+            self.cam2 = Path(self.cam2)
+
+    def to_toml(self) -> str:
+        return to_toml(self)
+
+
+@serialize
+@dataclass
+class CoordinateOptions:
+    """Astronomical coordinate options
+
+    .. admonition:: Tip: GAIA
+        :class: Tip
+
+        This can be auto-generated wtih GAIA coordinate information through the command line ``dpp new`` interface.
+
+    Parameters
+    ----------
+    object: str
+        SIMBAD-friendly object name
+    ra: str
+        Right ascension in sexagesimal hour angles
+    dec: str
+        Declination in sexagesimal degrees
+    parallax: float
+        parallax of system in mas
+    pm_ra: float
+        Proper motion of RA axis in mas/yr, by default 0.
+    pm_dec: float
+        Proper motion of DEC axis in mas/yr, by default 0.
+    frame: str
+        Coordinate reference frame, by default "icrs".
+    obstime: str
+        Observation time as a string, by default "J2016" (to coincide with GAIA coordinates)
+    """
+
+    object: str
+    ra: str
+    dec: str
+    parallax: float
+    pm_ra: float = field(default=0)
+    pm_dec: float = field(default=0)
+    frame: str = field(default="icrs", skip_if_default=True)
+    obstime: str = field(default="J2016", skip_if_default=True)
+
+    def __post_init__(self):
+        if isinstance(self.ra, str):
+            self.ra_ang = Angle(self.ra, "hour")
+        else:
+            self.ra_ang = Angle(self.ra, "deg")
+        self.ra = self.ra_ang.to_string(pad=True, sep=":")
+        self.dec_ang = Angle(self.dec, "deg")
+        self.dec = self.dec_ang.to_string(pad=True, sep=":")
+
+    def to_toml(self) -> str:
+        obj = {"coordinate": self}
+        return to_toml(obj)
+
+    def get_coord(self) -> SkyCoord:
+        return SkyCoord(
+            ra=self.ra_ang,
+            dec=self.dec_ang,
+            pm_ra_cosdec=self.pm_ra * u.mas / u.year,
+            pm_dec=self.pm_dec * u.mas / u.year,
+            distance=1e3 / self.parallax * u.pc,
+            frame=self.frame,
+            obstime=self.obstime,
+        )
+
+
+## Define classes for each configuration block
+@serialize
+@dataclass
+class DistortionOptions:
+    """Geometric distortion correction options
+
+    .. admonition:: Advanced Usage
+        :class: warning
+
+        Distortion correction requires specialized calibration files. Please get in contact with the SCExAO team for more details
+
+    Parameters
+    ----------
+    transform_filename: Path
+        The path to a CSV with the distortion corrections for each camera.
+    """
+
+    transform_filename: Path
+
+    def __post_init__(self):
+        self.transform_filename = Path(self.transform_filename)
+
+    def to_toml(self) -> str:
+        obj = {"calibrate": {"distortion": self}}
+        return to_toml(obj)
 
 
 @serialize
@@ -387,6 +497,8 @@ class PolarimetryOptions(OutputDirectory):
         Instrumental polarization (IP) correction options, by default None.
     N_per_hwp : int
         Number of cubes expected per HWP position, by default 1.
+    derotate_pa : bool
+        If true, will not assume the HWP is in pupil-tracking mode (the default) which requires additional rotation of the Stokes vectors by the parallactic angle. By defult, False.
     output_directory : Optional[Path]
         The diff images will be saved to the output directory. If not provided, will use the current working directory. By default None.
     force : bool
@@ -408,7 +520,7 @@ class PolarimetryOptions(OutputDirectory):
     """
 
     ip: Optional[IPOptions] = field(default=None, skip_if_default=True)
-    N_per_hwp: int = field(default=1, skip_if_default=True)
+    derotate_pa: bool = field(default=False, skip_if_default=True)
 
     def __post_init__(self):
         super().__post_init__()
@@ -418,6 +530,23 @@ class PolarimetryOptions(OutputDirectory):
     def to_toml(self) -> str:
         obj = {"polarimetry": self}
         return to_toml(obj)
+
+
+@serialize
+@dataclass
+class CamCtrOption:
+    cam1: Optional[list[float]] = field(default=None, skip_if_default=True)
+    cam2: Optional[list[float]] = field(default=None, skip_if_default=True)
+
+    def __post_init__(self):
+        if self.cam1 is not None:
+            self.cam1 = list(self.cam1)
+            if len(self.cam1) == 0:
+                self.cam1 = None
+        if self.cam2 is not None:
+            self.cam2 = list(self.cam2)
+            if len(self.cam2) == 0:
+                self.cam2 = None
 
 
 @serialize
@@ -492,10 +621,9 @@ class PipelineOptions:
     ----------
     name : str
         filename-friendly name used for outputs from this pipeline. For example "20230101_ABAur"
-    target : Optional[str]
-        `SIMBAD <https://simbad.cds.unistra.fr/simbad/>`_-friendly object name used for looking up precise coordinates. If not provided, will use coordinate from headers, by default None.
-    frame_centers : Optional[list | dict[str, Optional[list]]]
-        Estimates of the star position in pixels (x, y). If in PDI mode, expects a dictionary with keys "left" and "right" with the position for each beam in the raw files. If not provided, will use the geometric frame center, by default None.
+    coordinate : Optional[CoordinateOptions]
+    frame_centers : Optional[dict[str, Optional[list]]]
+        Estimates of the star position in pixels (x, y) for each camera provided as a dict with "cam1" and "cam2" keys. If not provided, will use the geometric frame center, by default None.
     coronagraph : Optional[CoronagraphOptions]
         If provided, sets coronagraph-specific options and processing
     satspots : Optional[SatspotOptions]
@@ -566,10 +694,8 @@ class PipelineOptions:
     """
 
     name: str
-    target: Optional[str] = field(default=None, skip_if_default=True)
-    frame_centers: Optional[list | dict[str, Optional[list]]] = field(
-        default=None, skip_if_default=True
-    )
+    coordinate: Optional[CoordinateOptions] = field(default=None, skip_if_default=True)
+    frame_centers: Optional[CamCtrOption] = field(default=None, skip_if_default=True)
     coronagraph: Optional[CoronagraphOptions] = field(default=None, skip_if_default=True)
     satspots: Optional[SatspotOptions] = field(default=None, skip_if_default=True)
     calibrate: Optional[CalibrateOptions] = field(default=None, skip_if_default=True)
@@ -581,6 +707,8 @@ class PipelineOptions:
     version: str = vpp.__version__
 
     def __post_init__(self):
+        if self.coordinate is not None and isinstance(self.coordinate, dict):
+            self.coordinate = CoordinateOptions(**self.coordinate)
         if self.coronagraph is not None and isinstance(self.coronagraph, dict):
             self.coronagraph = CoronagraphOptions(**self.coronagraph)
         if self.satspots is not None and isinstance(self.satspots, dict):
