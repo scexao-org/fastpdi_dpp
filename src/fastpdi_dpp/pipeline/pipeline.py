@@ -574,7 +574,7 @@ class Pipeline(PipelineOptions):
 
         new_paths = []
         for i in range(len(paths)):
-            outname = outdir / f"{self.name}_stokes_{i:03d}.fits"
+            outname = self.polarimetry.output_directory / f"{self.name}_stokes_{i:03d}.fits"
             ave_ang = average_angle([fits.getval(path, "D_IMRPAD") for path in paths[i]])
             new_paths.append(collapse_frames_files(paths[i], output=outname, method="median"))
             fits.setval(new_paths[i], "D_IMRPAD", value=ave_ang)
@@ -613,4 +613,5 @@ class Pipeline(PipelineOptions):
                 header=header,
                 force=True,
             )
+            fits.writeto(self.products.output_directory / f"{self.name}_stokes_angles.fits", stokes_angles, overwrite=True)
             self.logger.debug(f"saved collapsed Stokes cube to {outname_coll.absolute()}")

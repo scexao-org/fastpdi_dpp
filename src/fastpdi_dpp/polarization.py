@@ -8,6 +8,7 @@ from astropy.io import fits
 from numpy.typing import ArrayLike, NDArray
 from photutils import aperture_photometry
 from scipy.optimize import minimize_scalar
+from astropy.stats import biweight_location
 
 from fastpdi_dpp.constants import PUPIL_OFFSET
 from fastpdi_dpp.image_processing import combine_frames_headers, derotate_cube
@@ -205,7 +206,7 @@ def collapse_stokes_cube(stokes_cube, pa, derotate_pa=False, header=None):
 
     for s in range(stokes_cube_derot.shape[0]):
         derot = derotate_cube(stokes_cube_derot[s], pa)
-        stokes_out[s] = np.median(derot, axis=0, overwrite_input=True)
+        stokes_out[s] = biweight_location(derot, axis=0, ignore_nan=True)
     # now that cube is derotated we can apply WCS
     if header is not None:
         apply_wcs(header)

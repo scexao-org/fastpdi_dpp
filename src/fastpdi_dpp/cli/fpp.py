@@ -32,7 +32,7 @@ formatter = logging.Formatter(
 )
 
 # set up command line arguments
-parser = ArgumentParser(prog="dpp")
+parser = ArgumentParser(prog="fpp")
 parser.add_argument("-v", "--version", action="store_true", help="print version information")
 subparser = parser.add_subparsers(help="command to run")
 

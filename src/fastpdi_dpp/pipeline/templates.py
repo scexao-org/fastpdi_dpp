@@ -13,7 +13,6 @@ DEFAULT_DIRS = {
 
 FASTPDI_PDI = PipelineOptions(
     name="",
-    target="",
     frame_centers=dict(left=[], right=[]),
     calibrate=CalibrateOptions(
         master_dark="",
@@ -33,7 +32,6 @@ FASTPDI_PDI = PipelineOptions(
 
 FASTPDI_MAXIMAL = PipelineOptions(
     name="",
-    target="",
     frame_centers=dict(cam1=[], cam2=[]),
     calibrate=CalibrateOptions(
         master_dark="",

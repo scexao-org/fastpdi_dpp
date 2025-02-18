@@ -211,11 +211,12 @@ def offset_modelfit(frame, inds, method, fitter=fitting.LevMarLSQFitter()):
             y_mean=view_center[0],
             x_stddev=2,
             y_stddev=2,
+            theta=0
         )
     elif method == "airydisk":
         model = models.AiryDisk2D(amplitude=peak, x_0=view_center[1], y_0=view_center[0], radius=2)
 
-    model_fit = fitter(model, x, y, view)
+    model_fit = fitter(model, x, y, view, maxiter=5000)
 
     # normalize outputs
     if method == "moffat" or method == "airydisk":
